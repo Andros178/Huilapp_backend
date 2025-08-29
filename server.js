@@ -9,6 +9,9 @@ app.get('/', (req, res) => {
 const usersRoute = require('./routes/users');
 const productsRoute = require('./routes/products');
 
+app.use('/users', usersRoute);
+app.use('/products', productsRoute);
+
 // Example specifying the port and starting the server
 
 const port = process.env.PORT || 3000; // You can use environment variables for port configuration
