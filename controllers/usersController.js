@@ -24,7 +24,19 @@ const createUser = async (req , res) =>{
 };
 
 
+const deleteUser = async (req,res) =>{
+    try {
+        const {id} = req.params;
+        await pool.query('DELETE FROM usuarios where id = $1' , [id]);
+        res.json({message: `Usuario ${id} eliminado`})
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({error: 'No se pudo eliminar el usuario'})
+    }
+};
+
 module.exports = {
     getUsers,
-    createUser
+    createUser,
+    deleteUser
 }
