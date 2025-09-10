@@ -35,8 +35,26 @@ const deleteUser = async (req,res) =>{
     }
 };
 
+const updateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { usuario, email } = req.body;
+    await pool.query(
+      'UPDATE usuarios SET usuario=$1, email=$2 WHERE id=$3',
+      [usuario, email, id]
+    );
+    res.json({ message: `Usuario ${id} actualizado` });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al actualizar usuario' });
+  }
+};
+
+
+
 module.exports = {
     getUsers,
     createUser,
-    deleteUser
+    deleteUser,
+    updateUser
 }
