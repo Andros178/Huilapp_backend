@@ -21,6 +21,8 @@
   },
   "homepage": "https://github.com/Andros178/Huilapp_backend#readme",
   "dependencies": {
-    "express": "^5.1.0"
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "pg": "^8.16.3"
   }
 }

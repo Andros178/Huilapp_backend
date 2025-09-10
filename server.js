@@ -9,6 +9,7 @@ app.get('/', (req, res) => {
 const usersRoute = require('./routes/users');
 const productsRoute = require('./routes/products');
 
+app.use(express.json());
 app.use('/users', usersRoute);
 app.use('/products', productsRoute);
 
