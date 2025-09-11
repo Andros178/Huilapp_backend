@@ -7,11 +7,11 @@ app.get('/', (req, res) => {
 });
 
 const usersRoute = require('./routes/users');
-const productsRoute = require('./routes/products');
+const sitesRoute = require('./routes/sites');
 
 app.use(express.json());
 app.use('/users', usersRoute);
-app.use('/products', productsRoute);
+app.use('/sites', sitesRoute);
 
 // Example specifying the port and starting the server
 
