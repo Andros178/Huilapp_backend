@@ -8,11 +8,15 @@ app.get('/', (req, res) => {
 
 const usersRoute = require('./routes/users');
 const sitesRoute = require('./routes/sites');
+const resenasRoute = require('./routes/resenas');
+const chatRoute = require('./routes/chat');
+
 
 app.use(express.json());
 app.use('/users', usersRoute);
 app.use('/sites', sitesRoute);
-
+app.use('/resenas', resenasRoute);
+app.use('/chat', chatRoute);
 // Example specifying the port and starting the server
 
 const port = process.env.PORT || 3000; // You can use environment variables for port configuration
