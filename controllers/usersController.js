@@ -158,6 +158,29 @@ const resetPassword = async (req, res) => {
   }
 };
 
+const changePassword = async (req, res) => {
+  try {
+    const userId = req.user?.id; 
+    const { newPassword, newPassword2 } = req.body;
+
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+    if (!newPassword || !newPassword2) {
+      return res.status(400).json({ error: 'Faltan campos: newPassword, newPassword2' });
+    }
+    if (newPassword !== newPassword2) {
+      return res.status(400).json({ error: 'Las contraseñas no coinciden' });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await pool.query('UPDATE usuarios SET contrasena=$1 WHERE id=$2', [hashed, userId]);
+
+    return res.json({ message: 'Contraseña actualizada correctamente' });
+  } catch (error) {
+    console.error('Error en changePassword:', error);
+    return res.status(500).json({ error: 'No se pudo cambiar la contraseña' });
+  }
+};
+
 module.exports = {
   getUsers,
   createUser,
@@ -165,5 +188,5 @@ module.exports = {
   updateUser,
   loginUser,
   requestPasswordReset,
-  resetPassword,
+  resetPassword
 };

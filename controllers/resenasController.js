@@ -44,7 +44,7 @@ exports.getResenasBySitio = async (req, res) => {
   }
 };
 
-// Editar reseña (solo dueño)
+
 exports.updateResena = async (req, res) => {
   try {
     const { id_resena } = req.params;
@@ -55,7 +55,7 @@ exports.updateResena = async (req, res) => {
       return res.status(400).json({ message: 'El texto es requerido' });
     }
 
-    // Verificar dueño
+    
     const check = await pool.query(
       `SELECT * FROM resenas WHERE id_resena = $1 AND id_usuario = $2`,
       [id_resena, id_usuario]
@@ -77,13 +77,13 @@ exports.updateResena = async (req, res) => {
   }
 };
 
-// Eliminar reseña (solo dueño)
+
 exports.deleteResena = async (req, res) => {
   try {
     const { id_resena } = req.params;
     const id_usuario = req.user.id;
 
-    // Verificar dueño
+ 
     const check = await pool.query(
       `SELECT * FROM resenas WHERE id_resena = $1 AND id_usuario = $2`,
       [id_resena, id_usuario]
