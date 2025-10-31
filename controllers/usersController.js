@@ -188,5 +188,6 @@ module.exports = {
   updateUser,
   loginUser,
   requestPasswordReset,
-  resetPassword
+  resetPassword,
+  changePassword
 };
