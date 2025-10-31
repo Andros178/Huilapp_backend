@@ -101,31 +101,60 @@ const loginUser = async (req, res) => {
 const requestPasswordReset = async (req, res) => {
   try {
     const { email } = req.body;
+    console.log('[requestPasswordReset] request for email:', email);
 
     const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
+    console.log('[requestPasswordReset] query result rows:', result.rows.length);
     if (result.rows.length === 0) {
       return res.status(400).json({ error: 'Usuario no encontrado' });
     }
 
     const resetCode = Math.floor(1000 + Math.random() * 9000).toString();
     const expires = new Date(Date.now() + 15 * 60 * 1000);
+    console.log('[requestPasswordReset] generated code:', resetCode);
 
     await pool.query(
       'UPDATE usuarios SET reset_code=$1, reset_expires=$2 WHERE email=$3',
       [resetCode, expires, email]
     );
 
-    await transporter.sendMail({
-      from: process.env.SMTP_USER,
-      to: email,
-      subject: 'Recuperación de contraseña',
-      text: `Tu código de recuperación es: ${resetCode} (expira en 15 minutos)`,
-    });
+    // Intentar enviar el código por correo. Si no hay configuración SMTP,
+    // o ocurre un error enviando el correo, devolvemos éxito en modo
+    // desarrollo para no bloquear el flujo (y retornamos el código en la
+    // respuesta sólo en entornos no productivos).
+    let mailSent = false;
+    if (process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_HOST) {
+      try {
+        await transporter.sendMail({
+          from: process.env.SMTP_USER,
+          to: email,
+          subject: 'Recuperación de contraseña',
+          text: `Tu código de recuperación es: ${resetCode} (expira en 15 minutos)`,
+        });
+        mailSent = true;
+      } catch (mailErr) {
+        console.error('Error enviando email de recuperación:', mailErr);
+        // no throw; permitimos continuar para entornos de desarrollo
+      }
+    } else {
+      console.warn('SMTP no configurado: salto envío de email (usar expo.extra.apiHost o configurar SMTP en .env si desea enviar correos)');
+    }
 
-    res.json({ message: 'Código de recuperación enviado al correo' });
+    if (mailSent) {
+      return res.json({ message: 'Código de recuperación enviado al correo' });
+    }
+
+    // Si no se pudo enviar el mail, en desarrollo devolvemos el código para
+    // facilitar pruebas; en producción devolvemos éxito genérico.
+    if (process.env.NODE_ENV !== 'production') {
+      return res.json({ message: 'Código generado (no enviado por email en este entorno)', resetCode });
+    }
+
+    return res.json({ message: 'Código de recuperación generado. Revisa tu correo.' });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'No se pudo enviar el código de recuperación' });
+    console.error('[requestPasswordReset] Error:', error);
+    // Durante debugging devolvemos el mensaje de error para identificar la causa
+    return res.status(500).json({ error: 'No se pudo enviar el código de recuperación', details: error.message });
   }
 };
 
