@@ -1,6 +1,17 @@
 const express = require('express');
 const app = express();
 
+// Simple CORS middleware to allow requests from the frontend (useful for web/Expo web)
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 // Example defining a route in Express
 app.get('/', (req, res) => {
     res.send('<h1>Hello, Express.js root endpoint Server!</h1>');

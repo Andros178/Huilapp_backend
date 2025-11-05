@@ -5,7 +5,9 @@ const authenticateToken = require('../middleware/authenticateToken');
 const upload = require('../middleware/upload');
 
 router.post('/', authenticateToken, upload.single('imagen'), siteController.createSite);
+router.get('/', siteController.getSites);
 router.get('/my-sites', authenticateToken, siteController.getMySites);
+router.get('/:id', siteController.getSiteById);
 router.put('/:id', authenticateToken, siteController.updateSite);
 router.delete('/:id', authenticateToken, siteController.deleteSite);
 
