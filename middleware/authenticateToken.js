@@ -10,7 +10,8 @@ const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ error: 'Token inválido' });
-    req.user = user; 
+    req.user = user;
+    req.user.isAdmin = user.rol === 'administrador';
     next();
   });
 };
