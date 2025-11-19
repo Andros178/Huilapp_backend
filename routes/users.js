@@ -1,20 +1,23 @@
-// routes/users.js
 const express = require('express');
 const router = express.Router();
+const userController = require('../controllers/usersController');
+const authenticateToken = require('../middleware/authenticateToken');
+const upload = require('../middleware/upload'); 
 
-// Define a route
-router.get('/', (req, res) => {
-    res.send('this is user route');// this gets executed when user visit http://localhost:3000/users
-});
+router.get('/', authenticateToken, userController.getUsers);
 
-router.get('/101', (req, res) => {
-    res.send('this is user 101 route');// this gets executed when user visit http://localhost:3000/users/101
-});
+router.post('/register', upload.single('profile_picture'), userController.createUser);
 
-router.get('/102', (req, res) => {
-    res.send('this is user 102 route');// this gets executed when user visit http://localhost:3000/users/102
-});
+router.post('/login', userController.loginUser);
 
-// export the router module so that server.js file can use it
+router.put('/:id', authenticateToken, upload.single('profile_picture'), userController.updateUser);
+
+router.delete('/:id', authenticateToken, userController.deleteUser);
+
+router.post('/request-password-reset', userController.requestPasswordReset);
+
+router.post('/reset-password', userController.resetPassword);
+
+router.post('/change-password', authenticateToken, userController.changePassword);
 
 module.exports = router;
