@@ -152,6 +152,9 @@ const updateUser = async (req, res) => {
 // =========================
 // Login de usuario
 // =========================
+// =========================
+// Login de usuario
+// =========================
 const loginUser = async (req, res) => {
   try {
     const { email, contrasena } = req.body;
@@ -167,13 +170,17 @@ const loginUser = async (req, res) => {
       return res.status(400).json({ error: 'Contraseña incorrecta' });
     }
 
+    // 👉 El token AHORA incluye el rol
     const token = jwt.sign(
-      { id: user.id, usuario: user.usuario, email: user.email },
+      { id: user.id, usuario: user.usuario, email: user.email, rol: user.rol },
       JWT_SECRET,
       { expiresIn: '2h' }
     );
 
-    res.json({ message: 'Login exitoso', token, user });
+    // 👉 No enviamos campos sensibles al front
+    const { contrasena: _pw, reset_code, reset_expires, ...safeUser } = user;
+
+    res.json({ message: 'Login exitoso', token, user: safeUser });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Error al iniciar sesión' });
