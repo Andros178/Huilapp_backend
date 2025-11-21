@@ -1,24 +1,75 @@
 const pool = require('../db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 const https = require('https');
 const FormData = require('form-data');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // =========================
-// Configuración de correo
+// Envío de correo por Maileroo (API HTTP)
 // =========================
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+const sendResetEmailViaMaileroo = (toEmail, resetCode) => {
+  return new Promise((resolve, reject) => {
+    const apiKey = process.env.MAILEROO_API_KEY;
+    const fromAddress = process.env.MAIL_FROM;
+
+    if (!apiKey || !fromAddress) {
+      return reject(new Error('Faltan MAILEROO_API_KEY o MAIL_FROM en las variables de entorno'));
+    }
+
+    const body = JSON.stringify({
+      from: {
+        address: fromAddress,
+        display_name: 'Huilapp Soporte', // pon el nombre de tu app si quieres
+      },
+      to: [
+        {
+          address: toEmail,
+        },
+      ],
+      subject: 'Recuperación de contraseña',
+      plain: `Tu código de recuperación es: ${resetCode} (expira en 15 minutos)`,
+    });
+
+    const options = {
+      hostname: 'smtp.maileroo.com',
+      port: 443,
+      path: '/api/v2/emails',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        Authorization: `Bearer ${apiKey}`,
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => {
+        try {
+          const json = data ? JSON.parse(data) : {};
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(json);
+          } else {
+            reject(
+              new Error(
+                `Maileroo API error ${res.statusCode}: ${data || 'sin cuerpo de respuesta'}`
+              )
+            );
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+
+    req.on('error', (err) => reject(err));
+    req.write(body);
+    req.end();
+  });
+};
 
 // =========================
 // Subida a ImgBB
@@ -29,26 +80,29 @@ const uploadToImgbb = (fileBuffer, filename) => {
     const form = new FormData();
     form.append('image', fileBuffer, { filename });
 
-    const request = https.request({
-      method: 'POST',
-      host: 'api.imgbb.com',
-      path: `/1/upload?key=${apiKey}`,
-      headers: form.getHeaders(),
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data);
-          if (json.success) resolve(json.data.url);
-          else reject(new Error(json.error?.message || 'Error subiendo imagen'));
-        } catch (e) {
-          reject(e);
-        }
-      });
-    });
+    const request = https.request(
+      {
+        method: 'POST',
+        host: 'api.imgbb.com',
+        path: `/1/upload?key=${apiKey}`,
+        headers: form.getHeaders(),
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            if (json.success) resolve(json.data.url);
+            else reject(new Error(json.error?.message || 'Error subiendo imagen'));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+    );
 
-    request.on('error', err => reject(err));
+    request.on('error', (err) => reject(err));
     form.pipe(request);
   });
 };
@@ -152,9 +206,6 @@ const updateUser = async (req, res) => {
 // =========================
 // Login de usuario
 // =========================
-// =========================
-// Login de usuario
-// =========================
 const loginUser = async (req, res) => {
   try {
     const { email, contrasena } = req.body;
@@ -170,7 +221,7 @@ const loginUser = async (req, res) => {
       return res.status(400).json({ error: 'Contraseña incorrecta' });
     }
 
-    // 👉 El token AHORA incluye el rol
+    // 👉 El token incluye el rol
     const token = jwt.sign(
       { id: user.id, usuario: user.usuario, email: user.email, rol: user.rol },
       JWT_SECRET,
@@ -208,18 +259,18 @@ const requestPasswordReset = async (req, res) => {
     );
 
     let mailSent = false;
-    if (process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_HOST) {
-      try {
-        await transporter.sendMail({
-          from: process.env.SMTP_USER,
-          to: email,
-          subject: 'Recuperación de contraseña',
-          text: `Tu código de recuperación es: ${resetCode} (expira en 15 minutos)`,
-        });
+
+    try {
+      if (process.env.MAILEROO_API_KEY && process.env.MAIL_FROM) {
+        await sendResetEmailViaMaileroo(email, resetCode);
         mailSent = true;
-      } catch (mailErr) {
-        console.error('Error enviando email de recuperación:', mailErr);
+      } else {
+        console.warn(
+          'MAILEROO_API_KEY o MAIL_FROM no configurados, no se envía email de recuperación'
+        );
       }
+    } catch (mailErr) {
+      console.error('Error enviando email de recuperación (Maileroo API):', mailErr);
     }
 
     if (mailSent) {
@@ -227,7 +278,10 @@ const requestPasswordReset = async (req, res) => {
     }
 
     if (process.env.NODE_ENV !== 'production') {
-      return res.json({ message: 'Código generado (no enviado por email en este entorno)', resetCode });
+      return res.json({
+        message: 'Código generado (no enviado por email en este entorno)',
+        resetCode,
+      });
     }
 
     return res.json({ message: 'Código de recuperación generado. Revisa tu correo.' });
@@ -274,12 +328,14 @@ const resetPassword = async (req, res) => {
 // =========================
 const changePassword = async (req, res) => {
   try {
-    const userId = req.user?.id; 
+    const userId = req.user?.id;
     const { newPassword, newPassword2 } = req.body;
 
     if (!userId) return res.status(401).json({ error: 'No autenticado' });
     if (!newPassword || !newPassword2) {
-      return res.status(400).json({ error: 'Faltan campos: newPassword, newPassword2' });
+      return res
+        .status(400)
+        .json({ error: 'Faltan campos: newPassword, newPassword2' });
     }
     if (newPassword !== newPassword2) {
       return res.status(400).json({ error: 'Las contraseñas no coinciden' });
@@ -295,21 +351,20 @@ const changePassword = async (req, res) => {
   }
 };
 
-
 // =========================
 // Logout de usuario
 // =========================
 const logoutUser = async (req, res) => {
   try {
-    // Como el JWT es stateless, aquí normalmente solo respondemos OK
-    // y en el frontend se elimina el token del almacenamiento (localStorage / cookies).
-    return res.json({ message: 'Logout exitoso. El token debe eliminarse en el cliente.' });
+    // JWT es stateless: el front debe borrar el token
+    return res.json({
+      message: 'Logout exitoso. El token debe eliminarse en el cliente.',
+    });
   } catch (error) {
     console.error('Error en logoutUser:', error);
     return res.status(500).json({ error: 'No se pudo cerrar sesión' });
   }
 };
-
 
 module.exports = {
   getUsers,
@@ -320,5 +375,5 @@ module.exports = {
   requestPasswordReset,
   resetPassword,
   changePassword,
-  logoutUser  
+  logoutUser,
 };
