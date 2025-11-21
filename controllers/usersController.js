@@ -295,6 +295,22 @@ const changePassword = async (req, res) => {
   }
 };
 
+
+// =========================
+// Logout de usuario
+// =========================
+const logoutUser = async (req, res) => {
+  try {
+    // Como el JWT es stateless, aquí normalmente solo respondemos OK
+    // y en el frontend se elimina el token del almacenamiento (localStorage / cookies).
+    return res.json({ message: 'Logout exitoso. El token debe eliminarse en el cliente.' });
+  } catch (error) {
+    console.error('Error en logoutUser:', error);
+    return res.status(500).json({ error: 'No se pudo cerrar sesión' });
+  }
+};
+
+
 module.exports = {
   getUsers,
   createUser,
@@ -303,5 +319,6 @@ module.exports = {
   loginUser,
   requestPasswordReset,
   resetPassword,
-  changePassword
+  changePassword,
+  logoutUser  
 };
