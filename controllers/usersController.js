@@ -7,6 +7,24 @@ const FormData = require('form-data');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // =========================
+// Helpers de validación
+// =========================
+const isValidEmail = (email) => {
+  if (!email) return false;
+  const trimmed = String(email).trim();
+  const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return regex.test(trimmed);
+};
+
+// Mínimo 8 caracteres y al menos 1 mayúscula
+const isValidPassword = (password) => {
+  if (!password) return false;
+  const trimmed = String(password);
+  const regex = /^(?=.*[A-Z]).{8,}$/;
+  return regex.test(trimmed);
+};
+
+// =========================
 // Envío de correo por Maileroo (API HTTP)
 // =========================
 const sendResetEmailViaMaileroo = (toEmail, resetCode) => {
@@ -15,7 +33,9 @@ const sendResetEmailViaMaileroo = (toEmail, resetCode) => {
     const fromAddress = process.env.MAIL_FROM;
 
     if (!apiKey || !fromAddress) {
-      return reject(new Error('Faltan MAILEROO_API_KEY o MAIL_FROM en las variables de entorno'));
+      return reject(
+        new Error('Faltan MAILEROO_API_KEY o MAIL_FROM en las variables de entorno')
+      );
     }
 
     const body = JSON.stringify({
@@ -125,7 +145,47 @@ const getUsers = async (req, res) => {
 // =========================
 const createUser = async (req, res) => {
   try {
-    const { usuario, email, contrasena, nombre, apellidos, telefono } = req.body;
+    let { usuario, email, contrasena, nombre, apellidos, telefono } = req.body;
+
+    // Normalizar
+    usuario = usuario?.trim();
+    email = email?.trim();
+    nombre = nombre?.trim();
+    apellidos = apellidos?.trim();
+    telefono = telefono?.trim();
+
+    // Validar campos obligatorios
+    if (!usuario || !email || !contrasena || !nombre || !apellidos) {
+      return res.status(400).json({
+        error:
+          'Faltan campos obligatorios: usuario, email, contrasena, nombre, apellidos',
+      });
+    }
+
+    // Validar email
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'El formato del correo no es válido' });
+    }
+
+    // Validar contraseña
+    if (!isValidPassword(contrasena)) {
+      return res.status(400).json({
+        error:
+          'La contraseña debe tener mínimo 8 caracteres y al menos una letra mayúscula',
+      });
+    }
+
+    // Verificar que no exista ya el usuario o el correo
+    const existing = await pool.query(
+      'SELECT 1 FROM usuarios WHERE email = $1 OR usuario = $2',
+      [email, usuario]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({
+        error: 'Ya existe un usuario registrado con ese correo o nombre de usuario',
+      });
+    }
 
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(contrasena, saltRounds);
@@ -143,7 +203,7 @@ const createUser = async (req, res) => {
       [usuario, email, hashedPassword, nombre, apellidos, telefono, profile_picture]
     );
 
-    res.json({ message: 'Usuario creado', usuario: result.rows[0] });
+    res.status(201).json({ message: 'Usuario creado', usuario: result.rows[0] });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'No se pudo crear el usuario' });
@@ -156,6 +216,12 @@ const createUser = async (req, res) => {
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
+
+    const existing = await pool.query('SELECT 1 FROM usuarios WHERE id = $1', [id]);
+    if (!existing.rows.length) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
     await pool.query('DELETE FROM usuarios WHERE id = $1', [id]);
     res.json({ message: `Usuario ${id} eliminado` });
   } catch (error) {
@@ -170,7 +236,13 @@ const deleteUser = async (req, res) => {
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { usuario, email, nombre, apellidos, telefono } = req.body;
+    let { usuario, email, nombre, apellidos, telefono } = req.body;
+
+    usuario = usuario?.trim();
+    email = email?.trim();
+    nombre = nombre?.trim();
+    apellidos = apellidos?.trim();
+    telefono = telefono?.trim();
 
     // Obtener datos actuales (para mantener la imagen si no se reemplaza)
     const userCheck = await pool.query('SELECT * FROM usuarios WHERE id = $1', [id]);
@@ -178,7 +250,30 @@ const updateUser = async (req, res) => {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
 
-    let profile_picture = userCheck.rows[0].profile_picture;
+    const currentUser = userCheck.rows[0];
+
+    // Validar email si viene
+    if (email && !isValidEmail(email)) {
+      return res.status(400).json({ error: 'El formato del correo no es válido' });
+    }
+
+    // Si cambia usuario o email, comprobar que no sean de otro usuario
+    const newUsuario = usuario || currentUser.usuario;
+    const newEmail = email || currentUser.email;
+
+    const duplicate = await pool.query(
+      'SELECT 1 FROM usuarios WHERE (email = $1 OR usuario = $2) AND id <> $3',
+      [newEmail, newUsuario, id]
+    );
+
+    if (duplicate.rows.length > 0) {
+      return res.status(400).json({
+        error:
+          'Ya existe otro usuario con ese correo o nombre de usuario, no puedes actualizar a esos valores',
+      });
+    }
+
+    let profile_picture = currentUser.profile_picture;
     if (req.file) {
       console.log('Actualizando imagen de perfil...');
       profile_picture = await uploadToImgbb(req.file.buffer, req.file.originalname);
@@ -193,7 +288,15 @@ const updateUser = async (req, res) => {
            telefono = $5,
            profile_picture = $6
        WHERE id = $7`,
-      [usuario, email, nombre, apellidos, telefono, profile_picture, id]
+      [
+        newUsuario,
+        newEmail,
+        nombre || currentUser.nombre,
+        apellidos || currentUser.apellidos,
+        telefono || currentUser.telefono,
+        profile_picture,
+        id,
+      ]
     );
 
     res.json({ message: `Usuario ${id} actualizado correctamente` });
@@ -208,7 +311,19 @@ const updateUser = async (req, res) => {
 // =========================
 const loginUser = async (req, res) => {
   try {
-    const { email, contrasena } = req.body;
+    let { email, contrasena } = req.body;
+
+    email = email?.trim();
+
+    if (!email || !contrasena) {
+      return res
+        .status(400)
+        .json({ error: 'Faltan campos: email y contrasena son obligatorios' });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'El formato del correo no es válido' });
+    }
 
     const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
     if (result.rows.length === 0) {
@@ -221,14 +336,12 @@ const loginUser = async (req, res) => {
       return res.status(400).json({ error: 'Contraseña incorrecta' });
     }
 
-    // 👉 El token incluye el rol
     const token = jwt.sign(
       { id: user.id, usuario: user.usuario, email: user.email, rol: user.rol },
       JWT_SECRET,
       { expiresIn: '2h' }
     );
 
-    // 👉 No enviamos campos sensibles al front
     const { contrasena: _pw, reset_code, reset_expires, ...safeUser } = user;
 
     res.json({ message: 'Login exitoso', token, user: safeUser });
@@ -243,7 +356,17 @@ const loginUser = async (req, res) => {
 // =========================
 const requestPasswordReset = async (req, res) => {
   try {
-    const { email } = req.body;
+    let { email } = req.body;
+    email = email?.trim();
+
+    if (!email) {
+      return res.status(400).json({ error: 'El correo es obligatorio' });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'El formato del correo no es válido' });
+    }
+
     const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
 
     if (result.rows.length === 0) {
@@ -297,6 +420,20 @@ const requestPasswordReset = async (req, res) => {
 const resetPassword = async (req, res) => {
   try {
     const { email, code, nuevaContrasena } = req.body;
+
+    if (!email || !code || !nuevaContrasena) {
+      return res.status(400).json({
+        error: 'Faltan campos: email, code y nuevaContrasena son obligatorios',
+      });
+    }
+
+    if (!isValidPassword(nuevaContrasena)) {
+      return res.status(400).json({
+        error:
+          'La nueva contraseña debe tener mínimo 8 caracteres y al menos una letra mayúscula',
+      });
+    }
+
     const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
 
     if (result.rows.length === 0) {
@@ -339,6 +476,13 @@ const changePassword = async (req, res) => {
     }
     if (newPassword !== newPassword2) {
       return res.status(400).json({ error: 'Las contraseñas no coinciden' });
+    }
+
+    if (!isValidPassword(newPassword)) {
+      return res.status(400).json({
+        error:
+          'La nueva contraseña debe tener mínimo 8 caracteres y al menos una letra mayúscula',
+      });
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
