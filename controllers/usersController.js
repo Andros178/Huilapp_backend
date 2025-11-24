@@ -41,7 +41,7 @@ const sendResetEmailViaMaileroo = (toEmail, resetCode) => {
     const body = JSON.stringify({
       from: {
         address: fromAddress,
-        display_name: 'Huilapp Soporte', // nombre que quieras mostrar
+        display_name: 'Huilapp Soporte',
       },
       to: [
         {
@@ -153,7 +153,8 @@ const createUser = async (req, res) => {
     nombre = nombre?.trim();
     apellidos = apellidos?.trim();
     telefono = telefono?.trim();
-    rol = rol?.trim();
+    // default rol = "usuario"
+    const roleToSave = (rol && String(rol).trim()) || 'usuario';
 
     // Validar campos obligatorios
     if (!usuario || !email || !contrasena || !nombre || !apellidos) {
@@ -201,7 +202,7 @@ const createUser = async (req, res) => {
       `INSERT INTO usuarios (usuario, email, contrasena, nombre, apellidos, telefono, rol, profile_picture)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [usuario, email, hashedPassword, nombre, apellidos, telefono, rol || null, profile_picture]
+      [usuario, email, hashedPassword, nombre, apellidos, telefono, roleToSave, profile_picture]
     );
 
     res.status(201).json({ message: 'Usuario creado', usuario: result.rows[0] });
@@ -246,7 +247,7 @@ const updateUser = async (req, res) => {
     telefono = telefono?.trim();
     rol = rol?.trim();
 
-    // Obtener datos actuales (para mantener la imagen si no se reemplaza)
+    // Obtener datos actuales
     const userCheck = await pool.query('SELECT * FROM usuarios WHERE id = $1', [id]);
     if (!userCheck.rows.length) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
@@ -281,6 +282,9 @@ const updateUser = async (req, res) => {
       profile_picture = await uploadToImgbb(req.file.buffer, req.file.originalname);
     }
 
+    // default rol = "usuario" si no viene nada y en BD está null
+    const newRol = rol || currentUser.rol || 'usuario';
+
     await pool.query(
       `UPDATE usuarios 
        SET usuario = $1, 
@@ -297,7 +301,7 @@ const updateUser = async (req, res) => {
         nombre || currentUser.nombre,
         apellidos || currentUser.apellidos,
         telefono || currentUser.telefono,
-        rol || currentUser.rol,
+        newRol,
         profile_picture,
         id,
       ]
@@ -439,7 +443,6 @@ const verifyResetCode = async (req, res) => {
       return res.status(400).json({ error: 'El formato del correo no es válido' });
     }
 
-    // Opcional: comprobar que el código tenga 4 dígitos numéricos
     if (!/^\d{4}$/.test(code)) {
       return res.status(400).json({ error: 'El código debe tener 4 dígitos numéricos' });
     }
