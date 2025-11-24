@@ -1,24 +1,95 @@
 const pool = require('../db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 const https = require('https');
 const FormData = require('form-data');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // =========================
-// Configuración de correo
+// Helpers de validación
 // =========================
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+const isValidEmail = (email) => {
+  if (!email) return false;
+  const trimmed = String(email).trim();
+  const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return regex.test(trimmed);
+};
+
+// Mínimo 8 caracteres y al menos 1 mayúscula
+const isValidPassword = (password) => {
+  if (!password) return false;
+  const trimmed = String(password);
+  const regex = /^(?=.*[A-Z]).{8,}$/;
+  return regex.test(trimmed);
+};
+
+// =========================
+// Envío de correo por Maileroo (API HTTP)
+// =========================
+const sendResetEmailViaMaileroo = (toEmail, resetCode) => {
+  return new Promise((resolve, reject) => {
+    const apiKey = process.env.MAILEROO_API_KEY;
+    const fromAddress = process.env.MAIL_FROM;
+
+    if (!apiKey || !fromAddress) {
+      return reject(
+        new Error('Faltan MAILEROO_API_KEY o MAIL_FROM en las variables de entorno')
+      );
+    }
+
+    const body = JSON.stringify({
+      from: {
+        address: fromAddress,
+        display_name: 'Huilapp Soporte', // pon el nombre de tu app si quieres
+      },
+      to: [
+        {
+          address: toEmail,
+        },
+      ],
+      subject: 'Recuperación de contraseña',
+      plain: `Tu código de recuperación es: ${resetCode} (expira en 15 minutos)`,
+    });
+
+    const options = {
+      hostname: 'smtp.maileroo.com',
+      port: 443,
+      path: '/api/v2/emails',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        Authorization: `Bearer ${apiKey}`,
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => {
+        try {
+          const json = data ? JSON.parse(data) : {};
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(json);
+          } else {
+            reject(
+              new Error(
+                `Maileroo API error ${res.statusCode}: ${data || 'sin cuerpo de respuesta'}`
+              )
+            );
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+
+    req.on('error', (err) => reject(err));
+    req.write(body);
+    req.end();
+  });
+};
 
 // =========================
 // Subida a ImgBB
@@ -29,26 +100,29 @@ const uploadToImgbb = (fileBuffer, filename) => {
     const form = new FormData();
     form.append('image', fileBuffer, { filename });
 
-    const request = https.request({
-      method: 'POST',
-      host: 'api.imgbb.com',
-      path: `/1/upload?key=${apiKey}`,
-      headers: form.getHeaders(),
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data);
-          if (json.success) resolve(json.data.url);
-          else reject(new Error(json.error?.message || 'Error subiendo imagen'));
-        } catch (e) {
-          reject(e);
-        }
-      });
-    });
+    const request = https.request(
+      {
+        method: 'POST',
+        host: 'api.imgbb.com',
+        path: `/1/upload?key=${apiKey}`,
+        headers: form.getHeaders(),
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            if (json.success) resolve(json.data.url);
+            else reject(new Error(json.error?.message || 'Error subiendo imagen'));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+    );
 
-    request.on('error', err => reject(err));
+    request.on('error', (err) => reject(err));
     form.pipe(request);
   });
 };
@@ -71,7 +145,47 @@ const getUsers = async (req, res) => {
 // =========================
 const createUser = async (req, res) => {
   try {
-    const { usuario, email, contrasena, nombre, apellidos, telefono, rol } = req.body;
+    let { usuario, email, contrasena, nombre, apellidos, telefono } = req.body;
+
+    // Normalizar
+    usuario = usuario?.trim();
+    email = email?.trim();
+    nombre = nombre?.trim();
+    apellidos = apellidos?.trim();
+    telefono = telefono?.trim();
+
+    // Validar campos obligatorios
+    if (!usuario || !email || !contrasena || !nombre || !apellidos) {
+      return res.status(400).json({
+        error:
+          'Faltan campos obligatorios: usuario, email, contrasena, nombre, apellidos',
+      });
+    }
+
+    // Validar email
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'El formato del correo no es válido' });
+    }
+
+    // Validar contraseña
+    if (!isValidPassword(contrasena)) {
+      return res.status(400).json({
+        error:
+          'La contraseña debe tener mínimo 8 caracteres y al menos una letra mayúscula',
+      });
+    }
+
+    // Verificar que no exista ya el usuario o el correo
+    const existing = await pool.query(
+      'SELECT 1 FROM usuarios WHERE email = $1 OR usuario = $2',
+      [email, usuario]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({
+        error: 'Ya existe un usuario registrado con ese correo o nombre de usuario',
+      });
+    }
 
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(contrasena, saltRounds);
@@ -89,7 +203,7 @@ const createUser = async (req, res) => {
       [usuario, email, hashedPassword, nombre, apellidos, telefono, rol || null, profile_picture]
     );
 
-    res.json({ message: 'Usuario creado', usuario: result.rows[0] });
+    res.status(201).json({ message: 'Usuario creado', usuario: result.rows[0] });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'No se pudo crear el usuario' });
@@ -102,6 +216,12 @@ const createUser = async (req, res) => {
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
+
+    const existing = await pool.query('SELECT 1 FROM usuarios WHERE id = $1', [id]);
+    if (!existing.rows.length) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
     await pool.query('DELETE FROM usuarios WHERE id = $1', [id]);
     res.json({ message: `Usuario ${id} eliminado` });
   } catch (error) {
@@ -116,7 +236,13 @@ const deleteUser = async (req, res) => {
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { usuario, email, nombre, apellidos, telefono, rol } = req.body;
+    let { usuario, email, nombre, apellidos, telefono } = req.body;
+
+    usuario = usuario?.trim();
+    email = email?.trim();
+    nombre = nombre?.trim();
+    apellidos = apellidos?.trim();
+    telefono = telefono?.trim();
 
     // Obtener datos actuales (para mantener la imagen si no se reemplaza)
     const userCheck = await pool.query('SELECT * FROM usuarios WHERE id = $1', [id]);
@@ -124,7 +250,30 @@ const updateUser = async (req, res) => {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
 
-    let profile_picture = userCheck.rows[0].profile_picture;
+    const currentUser = userCheck.rows[0];
+
+    // Validar email si viene
+    if (email && !isValidEmail(email)) {
+      return res.status(400).json({ error: 'El formato del correo no es válido' });
+    }
+
+    // Si cambia usuario o email, comprobar que no sean de otro usuario
+    const newUsuario = usuario || currentUser.usuario;
+    const newEmail = email || currentUser.email;
+
+    const duplicate = await pool.query(
+      'SELECT 1 FROM usuarios WHERE (email = $1 OR usuario = $2) AND id <> $3',
+      [newEmail, newUsuario, id]
+    );
+
+    if (duplicate.rows.length > 0) {
+      return res.status(400).json({
+        error:
+          'Ya existe otro usuario con ese correo o nombre de usuario, no puedes actualizar a esos valores',
+      });
+    }
+
+    let profile_picture = currentUser.profile_picture;
     if (req.file) {
       console.log('Actualizando imagen de perfil...');
       profile_picture = await uploadToImgbb(req.file.buffer, req.file.originalname);
@@ -137,10 +286,17 @@ const updateUser = async (req, res) => {
            nombre = $3, 
            apellidos = $4, 
            telefono = $5,
-           rol = $6,
-           profile_picture = $7
-       WHERE id = $8`,
-      [usuario, email, nombre, apellidos, telefono, rol || null, profile_picture, id]
+           profile_picture = $6
+       WHERE id = $7`,
+      [
+        newUsuario,
+        newEmail,
+        nombre || currentUser.nombre,
+        apellidos || currentUser.apellidos,
+        telefono || currentUser.telefono,
+        profile_picture,
+        id,
+      ]
     );
 
     res.json({ message: `Usuario ${id} actualizado correctamente` });
@@ -155,7 +311,19 @@ const updateUser = async (req, res) => {
 // =========================
 const loginUser = async (req, res) => {
   try {
-    const { email, contrasena } = req.body;
+    let { email, contrasena } = req.body;
+
+    email = email?.trim();
+
+    if (!email || !contrasena) {
+      return res
+        .status(400)
+        .json({ error: 'Faltan campos: email y contrasena son obligatorios' });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'El formato del correo no es válido' });
+    }
 
     const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
     if (result.rows.length === 0) {
@@ -174,7 +342,9 @@ const loginUser = async (req, res) => {
       { expiresIn: '2h' }
     );
 
-    res.json({ message: 'Login exitoso', token, user });
+    const { contrasena: _pw, reset_code, reset_expires, ...safeUser } = user;
+
+    res.json({ message: 'Login exitoso', token, user: safeUser });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Error al iniciar sesión' });
@@ -186,10 +356,15 @@ const loginUser = async (req, res) => {
 // =========================
 const requestPasswordReset = async (req, res) => {
   try {
-    const { email } = req.body;
+    let { email } = req.body;
+    email = email?.trim();
 
     if (!email) {
-      return res.status(400).json({ error: 'Falta el email' });
+      return res.status(400).json({ error: 'El correo es obligatorio' });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'El formato del correo no es válido' });
     }
 
     const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
@@ -207,18 +382,18 @@ const requestPasswordReset = async (req, res) => {
     );
 
     let mailSent = false;
-    if (process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_HOST) {
-      try {
-        await transporter.sendMail({
-          from: process.env.SMTP_USER,
-          to: email,
-          subject: 'Recuperación de contraseña',
-          text: `Tu código de recuperación es: ${resetCode} (expira en 15 minutos)`,
-        });
+
+    try {
+      if (process.env.MAILEROO_API_KEY && process.env.MAIL_FROM) {
+        await sendResetEmailViaMaileroo(email, resetCode);
         mailSent = true;
-      } catch (mailErr) {
-        console.error('Error enviando email de recuperación:', mailErr);
+      } else {
+        console.warn(
+          'MAILEROO_API_KEY o MAIL_FROM no configurados, no se envía email de recuperación'
+        );
       }
+    } catch (mailErr) {
+      console.error('Error enviando email de recuperación (Maileroo API):', mailErr);
     }
 
     if (mailSent) {
@@ -226,8 +401,10 @@ const requestPasswordReset = async (req, res) => {
     }
 
     if (process.env.NODE_ENV !== 'production') {
-      // En desarrollo devolvemos el código para poder probar fácil
-      return res.json({ message: 'Código generado (no enviado por email en este entorno)', resetCode });
+      return res.json({
+        message: 'Código generado (no enviado por email en este entorno)',
+        resetCode,
+      });
     }
 
     return res.json({ message: 'Código de recuperación generado. Revisa tu correo.' });
@@ -243,10 +420,19 @@ const requestPasswordReset = async (req, res) => {
 // =========================
 const verifyResetCode = async (req, res) => {
   try {
-    const { email, code } = req.body;
+    const { email, code, nuevaContrasena } = req.body;
 
-    if (!email || !code) {
-      return res.status(400).json({ error: 'Faltan campos: email y code' });
+    if (!email || !code || !nuevaContrasena) {
+      return res.status(400).json({
+        error: 'Faltan campos: email, code y nuevaContrasena son obligatorios',
+      });
+    }
+
+    if (!isValidPassword(nuevaContrasena)) {
+      return res.status(400).json({
+        error:
+          'La nueva contraseña debe tener mínimo 8 caracteres y al menos una letra mayúscula',
+      });
     }
 
     const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
@@ -344,15 +530,24 @@ const resetPassword = async (req, res) => {
 // =========================
 const changePassword = async (req, res) => {
   try {
-    const userId = req.user?.id; 
+    const userId = req.user?.id;
     const { newPassword, newPassword2 } = req.body;
 
     if (!userId) return res.status(401).json({ error: 'No autenticado' });
     if (!newPassword || !newPassword2) {
-      return res.status(400).json({ error: 'Faltan campos: newPassword, newPassword2' });
+      return res
+        .status(400)
+        .json({ error: 'Faltan campos: newPassword, newPassword2' });
     }
     if (newPassword !== newPassword2) {
       return res.status(400).json({ error: 'Las contraseñas no coinciden' });
+    }
+
+    if (!isValidPassword(newPassword)) {
+      return res.status(400).json({
+        error:
+          'La nueva contraseña debe tener mínimo 8 caracteres y al menos una letra mayúscula',
+      });
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
@@ -362,6 +557,21 @@ const changePassword = async (req, res) => {
   } catch (error) {
     console.error('Error en changePassword:', error);
     return res.status(500).json({ error: 'No se pudo cambiar la contraseña' });
+  }
+};
+
+// =========================
+// Logout de usuario
+// =========================
+const logoutUser = async (req, res) => {
+  try {
+    // JWT es stateless: el front debe borrar el token
+    return res.json({
+      message: 'Logout exitoso. El token debe eliminarse en el cliente.',
+    });
+  } catch (error) {
+    console.error('Error en logoutUser:', error);
+    return res.status(500).json({ error: 'No se pudo cerrar sesión' });
   }
 };
 
@@ -375,4 +585,5 @@ module.exports = {
   verifyResetCode,
   resetPassword,
   changePassword,
+  logoutUser,
 };

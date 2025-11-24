@@ -10,6 +10,8 @@ router.post('/register', upload.single('profile_picture'), userController.create
 
 router.post('/login', userController.loginUser);
 
+router.post('/logout', authenticateToken, userController.logoutUser); // 👈 NUEVO
+
 router.put('/:id', authenticateToken, upload.single('profile_picture'), userController.updateUser);
 
 router.delete('/:id', authenticateToken, userController.deleteUser);
