@@ -71,7 +71,7 @@ const getUsers = async (req, res) => {
 // =========================
 const createUser = async (req, res) => {
   try {
-    const { usuario, email, contrasena, nombre, apellidos, telefono } = req.body;
+    const { usuario, email, contrasena, nombre, apellidos, telefono, rol } = req.body;
 
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(contrasena, saltRounds);
@@ -83,10 +83,10 @@ const createUser = async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO usuarios (usuario, email, contrasena, nombre, apellidos, telefono, profile_picture)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO usuarios (usuario, email, contrasena, nombre, apellidos, telefono, rol, profile_picture)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [usuario, email, hashedPassword, nombre, apellidos, telefono, profile_picture]
+      [usuario, email, hashedPassword, nombre, apellidos, telefono, rol || null, profile_picture]
     );
 
     res.json({ message: 'Usuario creado', usuario: result.rows[0] });
@@ -111,12 +111,12 @@ const deleteUser = async (req, res) => {
 };
 
 // =========================
-// Actualizar usuario
+ // Actualizar usuario
 // =========================
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { usuario, email, nombre, apellidos, telefono } = req.body;
+    const { usuario, email, nombre, apellidos, telefono, rol } = req.body;
 
     // Obtener datos actuales (para mantener la imagen si no se reemplaza)
     const userCheck = await pool.query('SELECT * FROM usuarios WHERE id = $1', [id]);
@@ -137,9 +137,10 @@ const updateUser = async (req, res) => {
            nombre = $3, 
            apellidos = $4, 
            telefono = $5,
-           profile_picture = $6
-       WHERE id = $7`,
-      [usuario, email, nombre, apellidos, telefono, profile_picture, id]
+           rol = $6,
+           profile_picture = $7
+       WHERE id = $8`,
+      [usuario, email, nombre, apellidos, telefono, rol || null, profile_picture, id]
     );
 
     res.json({ message: `Usuario ${id} actualizado correctamente` });
@@ -168,7 +169,7 @@ const loginUser = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, usuario: user.usuario, email: user.email },
+      { id: user.id, usuario: user.usuario, email: user.email, rol: user.rol },
       JWT_SECRET,
       { expiresIn: '2h' }
     );
@@ -186,6 +187,11 @@ const loginUser = async (req, res) => {
 const requestPasswordReset = async (req, res) => {
   try {
     const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Falta el email' });
+    }
+
     const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
 
     if (result.rows.length === 0) {
@@ -220,6 +226,7 @@ const requestPasswordReset = async (req, res) => {
     }
 
     if (process.env.NODE_ENV !== 'production') {
+      // En desarrollo devolvemos el código para poder probar fácil
       return res.json({ message: 'Código generado (no enviado por email en este entorno)', resetCode });
     }
 
@@ -231,11 +238,17 @@ const requestPasswordReset = async (req, res) => {
 };
 
 // =========================
-// Resetear contraseña
+// Verificar código de recuperación
+// Paso intermedio: email + code → resetToken
 // =========================
-const resetPassword = async (req, res) => {
+const verifyResetCode = async (req, res) => {
   try {
-    const { email, code, nuevaContrasena } = req.body;
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Faltan campos: email y code' });
+    }
+
     const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
 
     if (result.rows.length === 0) {
@@ -244,8 +257,72 @@ const resetPassword = async (req, res) => {
 
     const user = result.rows[0];
 
-    if (user.reset_code !== code || new Date(user.reset_expires) < new Date()) {
-      return res.status(400).json({ error: 'Código inválido o expirado' });
+    // Validar código
+    if (user.reset_code !== code) {
+      return res.status(400).json({ error: 'Código inválido' });
+    }
+
+    // Validar expiración
+    if (!user.reset_expires || new Date(user.reset_expires) < new Date()) {
+      return res.status(400).json({ error: 'Código expirado' });
+    }
+
+    // Si el código es correcto, generamos un token temporal de reset
+    const resetToken = jwt.sign(
+      { email, type: 'password_reset' },
+      JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+
+    return res.json({ message: 'Código válido', resetToken });
+  } catch (error) {
+    console.error('[verifyResetCode] Error:', error);
+    return res.status(500).json({ error: 'No se pudo verificar el código' });
+  }
+};
+
+// =========================
+// Resetear contraseña (después de verificar código)
+// =========================
+const resetPassword = async (req, res) => {
+  try {
+    const { resetToken, nuevaContrasena, nuevaContrasena2 } = req.body;
+
+    if (!resetToken || !nuevaContrasena || !nuevaContrasena2) {
+      return res.status(400).json({ error: 'Faltan campos: resetToken, nuevaContrasena, nuevaContrasena2' });
+    }
+
+    if (nuevaContrasena !== nuevaContrasena2) {
+      return res.status(400).json({ error: 'Las contraseñas no coinciden' });
+    }
+
+    let payload;
+    try {
+      payload = jwt.verify(resetToken, JWT_SECRET);
+    } catch (e) {
+      return res.status(400).json({ error: 'Token inválido o expirado' });
+    }
+
+    if (!payload || payload.type !== 'password_reset' || !payload.email) {
+      return res.status(400).json({ error: 'Token de reseteo no válido' });
+    }
+
+    const email = payload.email;
+
+    const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Usuario no encontrado' });
+    }
+
+    const user = result.rows[0];
+
+    // Aseguramos que el código asociado todavía es válido (por si acaso)
+    if (
+      !user.reset_code ||
+      !user.reset_expires ||
+      new Date(user.reset_expires) < new Date()
+    ) {
+      return res.status(400).json({ error: 'El código de recuperación ya no es válido, solicita uno nuevo' });
     }
 
     const hashedPassword = await bcrypt.hash(nuevaContrasena, 10);
@@ -257,7 +334,7 @@ const resetPassword = async (req, res) => {
 
     res.json({ message: 'Contraseña actualizada correctamente' });
   } catch (error) {
-    console.error(error);
+    console.error('[resetPassword] Error:', error);
     res.status(500).json({ error: 'No se pudo resetear la contraseña' });
   }
 };
@@ -295,6 +372,7 @@ module.exports = {
   updateUser,
   loginUser,
   requestPasswordReset,
+  verifyResetCode,
   resetPassword,
-  changePassword
+  changePassword,
 };
