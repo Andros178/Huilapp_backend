@@ -41,7 +41,7 @@ const sendResetEmailViaMaileroo = (toEmail, resetCode) => {
     const body = JSON.stringify({
       from: {
         address: fromAddress,
-        display_name: 'Huilapp Soporte', // pon el nombre de tu app si quieres
+        display_name: 'Huilapp Soporte', // nombre que quieras mostrar
       },
       to: [
         {
@@ -145,7 +145,7 @@ const getUsers = async (req, res) => {
 // =========================
 const createUser = async (req, res) => {
   try {
-    let { usuario, email, contrasena, nombre, apellidos, telefono } = req.body;
+    let { usuario, email, contrasena, nombre, apellidos, telefono, rol } = req.body;
 
     // Normalizar
     usuario = usuario?.trim();
@@ -153,6 +153,7 @@ const createUser = async (req, res) => {
     nombre = nombre?.trim();
     apellidos = apellidos?.trim();
     telefono = telefono?.trim();
+    rol = rol?.trim();
 
     // Validar campos obligatorios
     if (!usuario || !email || !contrasena || !nombre || !apellidos) {
@@ -231,18 +232,19 @@ const deleteUser = async (req, res) => {
 };
 
 // =========================
- // Actualizar usuario
+// Actualizar usuario
 // =========================
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    let { usuario, email, nombre, apellidos, telefono } = req.body;
+    let { usuario, email, nombre, apellidos, telefono, rol } = req.body;
 
     usuario = usuario?.trim();
     email = email?.trim();
     nombre = nombre?.trim();
     apellidos = apellidos?.trim();
     telefono = telefono?.trim();
+    rol = rol?.trim();
 
     // Obtener datos actuales (para mantener la imagen si no se reemplaza)
     const userCheck = await pool.query('SELECT * FROM usuarios WHERE id = $1', [id]);
@@ -286,14 +288,16 @@ const updateUser = async (req, res) => {
            nombre = $3, 
            apellidos = $4, 
            telefono = $5,
-           profile_picture = $6
-       WHERE id = $7`,
+           rol = $6,
+           profile_picture = $7
+       WHERE id = $8`,
       [
         newUsuario,
         newEmail,
         nombre || currentUser.nombre,
         apellidos || currentUser.apellidos,
         telefono || currentUser.telefono,
+        rol || currentUser.rol,
         profile_picture,
         id,
       ]
@@ -420,19 +424,24 @@ const requestPasswordReset = async (req, res) => {
 // =========================
 const verifyResetCode = async (req, res) => {
   try {
-    const { email, code, nuevaContrasena } = req.body;
+    let { email, code } = req.body;
 
-    if (!email || !code || !nuevaContrasena) {
+    email = email?.trim();
+    code = code?.trim();
+
+    if (!email || !code) {
       return res.status(400).json({
-        error: 'Faltan campos: email, code y nuevaContrasena son obligatorios',
+        error: 'Faltan campos: email y code son obligatorios',
       });
     }
 
-    if (!isValidPassword(nuevaContrasena)) {
-      return res.status(400).json({
-        error:
-          'La nueva contraseña debe tener mínimo 8 caracteres y al menos una letra mayúscula',
-      });
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'El formato del correo no es válido' });
+    }
+
+    // Opcional: comprobar que el código tenga 4 dígitos numéricos
+    if (!/^\d{4}$/.test(code)) {
+      return res.status(400).json({ error: 'El código debe tener 4 dígitos numéricos' });
     }
 
     const result = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
@@ -475,11 +484,20 @@ const resetPassword = async (req, res) => {
     const { resetToken, nuevaContrasena, nuevaContrasena2 } = req.body;
 
     if (!resetToken || !nuevaContrasena || !nuevaContrasena2) {
-      return res.status(400).json({ error: 'Faltan campos: resetToken, nuevaContrasena, nuevaContrasena2' });
+      return res.status(400).json({
+        error: 'Faltan campos: resetToken, nuevaContrasena, nuevaContrasena2',
+      });
     }
 
     if (nuevaContrasena !== nuevaContrasena2) {
       return res.status(400).json({ error: 'Las contraseñas no coinciden' });
+    }
+
+    if (!isValidPassword(nuevaContrasena)) {
+      return res.status(400).json({
+        error:
+          'La nueva contraseña debe tener mínimo 8 caracteres y al menos una letra mayúscula',
+      });
     }
 
     let payload;
@@ -508,7 +526,9 @@ const resetPassword = async (req, res) => {
       !user.reset_expires ||
       new Date(user.reset_expires) < new Date()
     ) {
-      return res.status(400).json({ error: 'El código de recuperación ya no es válido, solicita uno nuevo' });
+      return res.status(400).json({
+        error: 'El código de recuperación ya no es válido, solicita uno nuevo',
+      });
     }
 
     const hashedPassword = await bcrypt.hash(nuevaContrasena, 10);
