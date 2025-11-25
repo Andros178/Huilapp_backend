@@ -154,7 +154,7 @@ const createSite = async (req, res) => {
     const lat = parseLatLngOrNull(latitud);
     const lon = parseLatLngOrNull(longitud);
 
-    if (lat === NaN || lon === NaN) {
+    if (Number.isNaN(lat) || Number.isNaN(lon)) {
       return res.status(400).json({
         error: 'Latitud o longitud no tienen un formato numérico válido',
       });
@@ -216,6 +216,8 @@ const getMySites = async (req, res) => {
 
 // ==========================
 // Actualizar sitio
+//  - Usuario normal: solo sus sitios
+//  - Admin (rol = 'admin' o 'Administrador'): puede actualizar cualquier sitio
 // ==========================
 const updateSite = async (req, res) => {
   try {
@@ -230,21 +232,34 @@ const updateSite = async (req, res) => {
       latitud,
       longitud,
     } = req.body;
+
     const id_usuario = req.user.id;
+    const rol = req.user.rol;
 
     const numericId = parseInt(id, 10);
     if (Number.isNaN(numericId)) {
       return res.status(400).json({ error: 'ID de sitio inválido' });
     }
 
-    const siteCheck = await pool.query(
-      'SELECT * FROM sitio WHERE id_sitio=$1 AND id_usuario=$2',
-      [numericId, id_usuario]
-    );
+    let siteCheck;
+    const isAdmin = rol === 'admin' || rol === 'Administrador';
+
+    if (isAdmin) {
+      siteCheck = await pool.query(
+        'SELECT * FROM sitio WHERE id_sitio=$1',
+        [numericId]
+      );
+    } else {
+      siteCheck = await pool.query(
+        'SELECT * FROM sitio WHERE id_sitio=$1 AND id_usuario=$2',
+        [numericId, id_usuario]
+      );
+    }
+
     if (!siteCheck.rows.length) {
       return res
-        .status(403)
-        .json({ error: 'No tienes permiso para modificar este sitio' });
+        .status(isAdmin ? 404 : 403)
+        .json({ error: isAdmin ? 'Sitio no encontrado' : 'No tienes permiso para modificar este sitio' });
     }
 
     const currentSite = siteCheck.rows[0];
@@ -294,14 +309,15 @@ const updateSite = async (req, res) => {
       }
     }
 
-    // Validar duplicado de nombre para el mismo usuario
+    // Validar duplicado de nombre para el mismo usuario (o para el mismo dueño original)
+    const ownerId = currentSite.id_usuario;
     const dup = await pool.query(
       'SELECT 1 FROM sitio WHERE LOWER(nombre) = LOWER($1) AND id_usuario = $2 AND id_sitio <> $3',
-      [newNombre, id_usuario, numericId]
+      [newNombre, ownerId, numericId]
     );
     if (dup.rows.length > 0) {
       return res.status(400).json({
-        error: 'Ya tienes otro sitio con ese nombre, no puedes usarlo de nuevo',
+        error: 'Ya existe otro sitio con ese nombre para este usuario',
       });
     }
 
@@ -329,7 +345,7 @@ const updateSite = async (req, res) => {
       ? parseLatLngOrNull(longitud)
       : currentSite.longitud;
 
-    if (lat === NaN || lon === NaN) {
+    if (Number.isNaN(lat) || Number.isNaN(lon)) {
       return res.status(400).json({
         error: 'Latitud o longitud no tienen un formato numérico válido',
       });
@@ -351,25 +367,39 @@ const updateSite = async (req, res) => {
 
 // ==========================
 // Eliminar sitio
+//  - Usuario normal: solo sus sitios
+//  - Admin: cualquier sitio
 // ==========================
 const deleteSite = async (req, res) => {
   try {
     const { id } = req.params;
     const id_usuario = req.user.id;
+    const rol = req.user.rol;
 
     const numericId = parseInt(id, 10);
     if (Number.isNaN(numericId)) {
       return res.status(400).json({ error: 'ID de sitio inválido' });
     }
 
-    const siteCheck = await pool.query(
-      'SELECT * FROM sitio WHERE id_sitio=$1 AND id_usuario=$2',
-      [numericId, id_usuario]
-    );
+    const isAdmin = rol === 'admin' || rol === 'Administrador';
+
+    let siteCheck;
+    if (isAdmin) {
+      siteCheck = await pool.query(
+        'SELECT * FROM sitio WHERE id_sitio=$1',
+        [numericId]
+      );
+    } else {
+      siteCheck = await pool.query(
+        'SELECT * FROM sitio WHERE id_sitio=$1 AND id_usuario=$2',
+        [numericId, id_usuario]
+      );
+    }
+
     if (!siteCheck.rows.length) {
       return res
-        .status(403)
-        .json({ error: 'No tienes permiso para eliminar este sitio' });
+        .status(isAdmin ? 404 : 403)
+        .json({ error: isAdmin ? 'Sitio no encontrado' : 'No tienes permiso para eliminar este sitio' });
     }
 
     await pool.query('DELETE FROM sitio WHERE id_sitio=$1', [numericId]);
@@ -382,26 +412,41 @@ const deleteSite = async (req, res) => {
 
 // ==========================
 // Subir imagen a sitio
+//  - Usuario normal: solo sus sitios
+//  - Admin: cualquier sitio
 // ==========================
 const uploadSiteImage = async (req, res) => {
   try {
     const { id } = req.params;
     const id_usuario = req.user.id;
+    const rol = req.user.rol;
 
     const numericId = parseInt(id, 10);
     if (Number.isNaN(numericId)) {
       return res.status(400).json({ error: 'ID de sitio inválido' });
     }
 
-    const siteCheck = await pool.query(
-      'SELECT * FROM sitio WHERE id_sitio=$1 AND id_usuario=$2',
-      [numericId, id_usuario]
-    );
+    const isAdmin = rol === 'admin' || rol === 'Administrador';
+
+    let siteCheck;
+    if (isAdmin) {
+      siteCheck = await pool.query(
+        'SELECT * FROM sitio WHERE id_sitio=$1',
+        [numericId]
+      );
+    } else {
+      siteCheck = await pool.query(
+        'SELECT * FROM sitio WHERE id_sitio=$1 AND id_usuario=$2',
+        [numericId, id_usuario]
+      );
+    }
+
     if (!siteCheck.rows.length) {
       return res
-        .status(403)
-        .json({ error: 'No tienes permiso para modificar este sitio' });
+        .status(isAdmin ? 404 : 403)
+        .json({ error: isAdmin ? 'Sitio no encontrado' : 'No tienes permiso para modificar este sitio' });
     }
+
     if (!req.file) {
       return res.status(400).json({ error: 'No se subió ninguna imagen' });
     }
