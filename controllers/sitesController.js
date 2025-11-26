@@ -321,11 +321,56 @@ const updateSite = async (req, res) => {
       });
     }
 
-    // Fotos
-    const newFotos =
-      typeof fotos !== 'undefined'
-        ? JSON.stringify(fotos)
-        : currentSite.fotos || '[]';
+    // ==========================
+    // Fotos (normalizar JSON siempre)
+    // ==========================
+    let fotosArray = [];
+
+    if (typeof fotos !== 'undefined') {
+      // Viene algo desde el front
+      if (Array.isArray(fotos)) {
+        fotosArray = fotos;
+      } else if (typeof fotos === 'string') {
+        // Puede venir como JSON string o una URL suelta
+        try {
+          const parsed = JSON.parse(fotos);
+          if (Array.isArray(parsed)) {
+            fotosArray = parsed;
+          } else {
+            // No es array → tratamos la string como una URL única
+            fotosArray = [fotos];
+          }
+        } catch {
+          // No es JSON → asumimos que es una sola URL
+          fotosArray = [fotos];
+        }
+      } else {
+        // Cualquier otro tipo lo metemos en array para que sea JSON válido
+        fotosArray = [fotos];
+      }
+    } else {
+      // No mandaron fotos: usamos lo que ya hay, pero saneando
+      if (Array.isArray(currentSite.fotos)) {
+        fotosArray = currentSite.fotos;
+      } else if (typeof currentSite.fotos === 'string' && currentSite.fotos.trim() !== '') {
+        try {
+          const parsed = JSON.parse(currentSite.fotos);
+          if (Array.isArray(parsed)) {
+            fotosArray = parsed;
+          } else {
+            // Si había algo raro como {"url"} lo ignoramos para no romper el JSON
+            fotosArray = [];
+          }
+        } catch {
+          // String inválida → la descartamos para no generar error 22P02
+          fotosArray = [];
+        }
+      } else {
+        fotosArray = [];
+      }
+    }
+
+    const newFotos = JSON.stringify(fotosArray);
 
     // Booleans
     const pet =
