@@ -231,6 +231,9 @@ const updateSite = async (req, res) => {
       kids_friendly,
       latitud,
       longitud,
+      descripcion,
+      direccion,
+      telefono,
     } = req.body;
 
     const id_usuario = req.user.id;
@@ -241,9 +244,9 @@ const updateSite = async (req, res) => {
       return res.status(400).json({ error: 'ID de sitio inválido' });
     }
 
-    let siteCheck;
     const isAdmin = rol === 'admin' || rol === 'administrador';
 
+    let siteCheck;
     if (isAdmin) {
       siteCheck = await pool.query(
         'SELECT * FROM sitio WHERE id_sitio=$1',
@@ -267,6 +270,9 @@ const updateSite = async (req, res) => {
     // Normalizar strings básicos
     if (typeof nombre === 'string') nombre = nombre.trim();
     if (typeof categoria === 'string') categoria = categoria.trim();
+    if (typeof descripcion === 'string') descripcion = descripcion.trim();
+    if (typeof direccion === 'string') direccion = direccion.trim();
+    if (typeof telefono === 'string') telefono = telefono.trim();
 
     // Validar nombre/categoría si vienen
     const newNombre = nombre || currentSite.nombre;
@@ -281,6 +287,28 @@ const updateSite = async (req, res) => {
       return res
         .status(400)
         .json({ error: 'La categoría no puede quedar vacía' });
+    }
+
+    // Descripción
+    const newDescripcion =
+      isNonEmptyString(descripcion) ? descripcion : (currentSite.descripcion || '');
+
+    // Dirección
+    const newDireccion =
+      isNonEmptyString(direccion) ? direccion : (currentSite.direccion || '');
+
+    // Teléfono (si viene uno nuevo y no está vacío, lo validamos)
+    let newTelefono;
+    if (typeof telefono === 'string' && telefono.length > 0) {
+      if (!isValidPhone(telefono)) {
+        return res.status(400).json({
+          error:
+            'El teléfono no tiene un formato válido (solo números, espacios, +, -, paréntesis)',
+        });
+      }
+      newTelefono = telefono;
+    } else {
+      newTelefono = currentSite.telefono || '';
     }
 
     // Subcategorías
@@ -352,7 +380,10 @@ const updateSite = async (req, res) => {
       // No mandaron fotos: usamos lo que ya hay, pero saneando
       if (Array.isArray(currentSite.fotos)) {
         fotosArray = currentSite.fotos;
-      } else if (typeof currentSite.fotos === 'string' && currentSite.fotos.trim() !== '') {
+      } else if (
+        typeof currentSite.fotos === 'string' &&
+        currentSite.fotos.trim() !== ''
+      ) {
         try {
           const parsed = JSON.parse(currentSite.fotos);
           if (Array.isArray(parsed)) {
@@ -383,12 +414,14 @@ const updateSite = async (req, res) => {
         : currentSite.kids_friendly;
 
     // Coordenadas
-    const lat = typeof latitud !== 'undefined'
-      ? parseLatLngOrNull(latitud)
-      : currentSite.latitud;
-    const lon = typeof longitud !== 'undefined'
-      ? parseLatLngOrNull(longitud)
-      : currentSite.longitud;
+    const lat =
+      typeof latitud !== 'undefined'
+        ? parseLatLngOrNull(latitud)
+        : currentSite.latitud;
+    const lon =
+      typeof longitud !== 'undefined'
+        ? parseLatLngOrNull(longitud)
+        : currentSite.longitud;
 
     if (Number.isNaN(lat) || Number.isNaN(lon)) {
       return res.status(400).json({
@@ -397,10 +430,34 @@ const updateSite = async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE sitio SET nombre=$1, categoria=$2, subcategorias=$3, fotos=$4, pet_friendly=$5, kids_friendly=$6, latitud=$7, longitud=$8
-       WHERE id_sitio=$9
+      `UPDATE sitio 
+       SET nombre=$1,
+           categoria=$2,
+           subcategorias=$3,
+           fotos=$4,
+           pet_friendly=$5,
+           kids_friendly=$6,
+           latitud=$7,
+           longitud=$8,
+           descripcion=$9,
+           direccion=$10,
+           telefono=$11
+       WHERE id_sitio=$12
        RETURNING *`,
-      [newNombre, newCategoria, JSON.stringify(subcatsArray), newFotos, pet, kids, lat, lon, numericId]
+      [
+        newNombre,
+        newCategoria,
+        JSON.stringify(subcatsArray),
+        newFotos,
+        pet,
+        kids,
+        lat,
+        lon,
+        newDescripcion,
+        newDireccion,
+        newTelefono,
+        numericId,
+      ]
     );
 
     res.json({ message: 'Sitio actualizado', sitio: result.rows[0] });
