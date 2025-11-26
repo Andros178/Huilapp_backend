@@ -426,7 +426,7 @@ const deleteSite = async (req, res) => {
       return res.status(400).json({ error: 'ID de sitio inválido' });
     }
 
-    const isAdmin = rol === 'admin' || rol === 'Administrador';
+    const isAdmin = rol === 'admin' || rol === 'administrador';
 
     let siteCheck;
     if (isAdmin) {
@@ -471,7 +471,7 @@ const uploadSiteImage = async (req, res) => {
       return res.status(400).json({ error: 'ID de sitio inválido' });
     }
 
-    const isAdmin = rol === 'admin' || rol === 'Administrador';
+    const isAdmin = rol === 'admin' || rol === 'administrador';
 
     let siteCheck;
     if (isAdmin) {
