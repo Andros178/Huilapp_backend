@@ -242,7 +242,7 @@ const updateSite = async (req, res) => {
     }
 
     let siteCheck;
-    const isAdmin = rol === 'admin' || rol === 'Administrador';
+    const isAdmin = rol === 'admin' || rol === 'administrador';
 
     if (isAdmin) {
       siteCheck = await pool.query(
